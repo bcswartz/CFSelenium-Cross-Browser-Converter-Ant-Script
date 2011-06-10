@@ -1,0 +1,392 @@
+<!--
+	CFSelenium Cross-Browser Converter Ant Script
+	Created by:  Brian Swartzfager
+	Last updated: 6/9/2011
+	
+	Currently, CFSelenium test cases created using the Firefox Selenium IDE plugin and then exported in CFML format 
+	contain a placeholder for the URL of the site (local or remote) you want to test against, and is set to execute the test against
+	the Firefox browser.
+	
+	This Ant script will make some changes to your initial Firefox test cases, such as inserting the site URL you want to test 
+	against and setting an AJAX-friendly execution speed (so any changes made to be page via AJAX have time to occur before
+	the next step of the test).  It will then makes copies of the tests for whichever additional browsers you want to test against and
+	place them in separate folders (one per browser).
+	
+	If any of your tests capture screenshots, this Ant script will adjust the screenshot commands to make sure they work for each
+	supported browser and will ensure that each screenshot file has a unique and incremental name associated with the test
+	so that you can take multiple screenshots during a test and can distinguish them afterwards.  The screenshots will be saved in 
+	a screenshots folder within each browser test folder.
+	
+	Once you have the script in place and configured properly, you can create new tests in Selenium IDE, save them to your Firefox
+	test case folder, and run the script to not only make them operational in Firefox but to make useable copies for each 
+	browser you want to test (and you can run the script every time you add new tests).
+	
+	
+	INSTRUCTIONS:
+	
+	* Create a folder to hold your CFSelenium tests for Firefox.  All test cases you create with Selenium IDE and export via the 
+	CFML formatter should be stored in this directory.  When you save the exported file, save it with a name that begins with "test"
+	(so you can search for it and run it in the MXUnit Eclipse plugin if you wish) and with the ".cfc" file extension.  Create additional 
+	parallel folders for the other browsers you want to test, and if you plan on generating screenshot images, create a subfolder
+	in each browser folder (like "ss").
+	
+	An example setup:
+	
+		../mySeleniumTestsFolder
+			firefox
+				ss
+			googlechrome
+				ss
+			safari
+				ss
+			...
+	
+	* Update all of the relevant properties in the CONFIG section (if you do not plan to use particular browsers, you can skip 
+	those properties).  
+	
+		* Sometimes the default wildcard setting for starting up a browser (like "*firefox") will not work and you'll need to 
+		specify the path to the browser executable.  For more information on possible settings to get your browsers to work,
+		check out http://www.thoughtdelimited.org/thoughts/post.cfm/using-cfselenium-with-the-most-common-browsers
+		
+		* If the browser you want to test runs on a virtual machine (for example, if you're using a Mac and run IE in a VM), you
+		should be able to test against it by changing the "IP" setting from "localhost" to the IP address associated with the VM
+		instance (like "172.16.x.x").  NOTE: you will have to start the Selenium Server jar on the VM manually in order to run
+		your tests.
+		
+			* Capturing screenshots from a browser running in a VM is a little tricky.  In order for the Selenium Server on the VM
+			to write those screenshot files to the screenshots directory for your browser, you need to have that screenshots folder 
+			accessible to the VM operating system as a mapped drive and tell Selenium to write to that mapped drive.  If you 
+			specify a mapped drive path in the "mappedDrivePath" configuration setting for a browser, the Ant script will make
+			sure the appropriate screenshot command is set to write the files to that location.  The only browser this script will
+			NOT accept a mapped drive for is Firefox (the assumption being that you are not running Firefox in a VM).
+			
+	
+	* The CONVERT section contains the statements that will make copies of the Firefox tests for other browsers.  Comment
+	out any you do not want to use.
+	
+	* To run the Ant script in Eclipse, right-click on the file, choose "Run As", and run it as an "Ant Build."
+	
+	
+	TIPS:
+	
+	* After running the script, make sure your tests work in Firefox as expected before trying them in the other browsers.
+	
+	* The only browsers that support the captureEntirePageScreenshot Selenium commands are Firefox and (with the help 
+	of the snapsie helper program - see http://www.thoughtdelimited.org/thoughts/post.cfm/taking-screenshots-with-cfselenium) 
+	Internet Explorer.  For all other browsers, only the captureScreenshot command is supported, and that command creates a 
+	snapshot of your entire monitor window, so when you do run tests that take screenshots, keep your desktop view clean so
+	the browser window is visible.  You can denote in the configuration settings whether you have snapsie installed on your Internet
+	Explorer machine and this script will adjust accordingly.
+
+-->	
+<project name="Convert and Copy CFSelenium MXUnit tests" default="convertCopyToAll" basedir="..">
+	
+	<!-- CONFIG -->
+
+	<!-- The dot-notation path to the CFSeleniumTestCase or CFSeleniumTestCase_Tags.cfc (if you're using CF 8)
+	file that extends MXUnit TestCase cfc -->
+	<property name="MXUnitTestCaseDotPath" value="cfselenium.CFSeleniumTestCase" />
+
+	<!-- Absolute path to the folder containing the different test folders for the different browsers 
+	Examples:
+	<property name="baseSeleniumTestDirectory" value="C:/Sites/BigClientSite/htdocs/_development/cfselenium/mySeleniumTestsFolder" />
+	<property name="baseSeleniumTestDirectory" value="/Users/Brian/Sites/BigClientSite/htdocs/_development/cfselenium/mySeleniumTestsFolder" />
+	-->
+	<property name="baseSeleniumTestDirectory" value="" />
+	
+	<!-- Name of the screenshot subfolder within each browser test folder.  Default is "ss" -->
+	<property name="screenshotFolder" value="ss" />
+
+	<!-- Hostname for the site whose pages you're testing with your test 
+	Example:
+	<property name="hostname" value="http://www.myBetaSite.com" />
+	-->
+	<property name="hostname" value="" />
+	
+	
+	<!-- FIREFOX PROPERTIES -->
+		<!-- Name of the folder containing the test cases -->
+		<property name="firefoxFolder" value="firefox" />
+		<!-- IP to direct Firefox Selenium calls to (default "locahost") -->
+		<property name="firefoxIP" value="localhost" />
+		<!-- Selenium browser call for Firefox (default is *firefox) -->
+		<property name="firefoxBrowser" value="*firefox" />
+
+	<!-- CHROME PROPERTIES -->
+		<!-- Name of the folder containing the test cases -->
+		<property name="chromeFolder" value="googlechrome" />
+		<!-- IP to direct Chrome Selenium calls to (default "locahost") -->
+		<property name="chromeIP" value="localhost" />
+		<!-- Selenium browser call for Chrome (default is *googlechrome) -->
+		<property name="chromeBrowser" value="*googlechrome" />
+		<!-- If browser runs in a VM, uncomment and provide the absolute mapped drive path for where the VM should write any screenshots.
+		Leave out the browser folder name.  If not running in a VM, leave blank.
+		Example:
+		<property name="chromeMappedDrivePath" value="Z:/Sites/BigClientSite/htdocs/_development/cfselenium/myTests" />
+		-->
+		<!-- <property name="chromeMappedDrivePath" value="" /> -->
+	
+	<!-- SAFARI PROPERTIES -->
+		<!-- Name of the folder containing the test cases -->
+		<property name="safariFolder" value="safari" />
+		<!-- IP to direct Safari Selenium calls to (default "locahost") -->
+		<property name="safariIP" value="localhost" />
+		<!-- Selenium browser call for Safari (default is *safari) -->
+		<property name="safariBrowser" value="*safari" />
+		<!-- If browser runs in a VM, uncomment and provide the absolute mapped drive path for where the VM should write any screenshots.
+		Leave out the browser folder name.  If not running in a VM, leave blank.
+		-->
+		<!-- <property name="safariMappedDrivePath" value="" /> -->
+
+	<!-- OPERA PROPERTIES -->
+		<!-- Name of the folder containing the test cases -->
+		<property name="operaFolder" value="opera" />
+		<!-- IP to direct Opera Selenium calls to (default "locahost") -->
+		<property name="operaIP" value="localhost" />
+		<!-- Opera browser call for Safari (default is *opera) 
+		Example of specifying full path to Opera executable on a Mac:
+		<property name="operaBrowser" value="*custom /Applications/Opera.app/Contents/MacOS/Opera" />
+		-->
+		<property name="operaBrowser" value="*opera" />
+		<!-- If browser runs in a VM, uncomment and provide the absolute mapped drive path for where the VM should write any screenshots.
+		Leave out the browser folder name.  If not running in a VM, leave blank.
+		-->
+		<!-- <property name="operaMappedDrivePath" value="" /> -->
+
+	<!-- INTERNET EXPLORER (IE) PROPERTIES -->
+		<!-- Name of the folder containing the test cases -->
+		<property name="ieFolder" value="ie" />
+		<!-- IP to direct IE Selenium calls to (default "locahost") -->
+		<property name="ieIP" value="localhost" />
+		<!-- Selenium browser call for IE (default is *iexplore) -->
+		<property name="ieBrowser" value="*iexplore" />
+		<!-- If browser runs in a VM, uncomment and  provide the absolute mapped drive path for where the VM should write any screenshots.
+		Leave out the browser folder name.  If not running in a VM, leave blank.
+		-->
+		<!-- <property name="ieMappedDrivePath" value="Z:/Sites/test/htdocs/2011/seltemp" /> -->
+		<!-- If you are using the snapsie library on the machine running IE, uncomment the snapsieInstalled property so you can run the more
+		useful captureEntirePageScreenshot command instead of captureScreenshot.  Otherwise, leave blank. -->
+		
+		<!-- <property name="snapsieInstalled" value="yes" /> -->
+		
+	<!-- DEFAULT ANT TASK (ALWAYS RUNS) +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
+	<target name="convertCopyToAll">
+		<echo>Starting conversion of Firefox tests...</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes='*.cfc' token='extends="cfselenium.CFSeleniumTestCase"' value='extends="${MXUnitTestCaseDotPath}"' />
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes='*.cfc' token='enter_starting_url_here' value='${hostname}' />
+	
+		<echo>Adding browser command statement and counter code for any screenshot commands....</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+			<include name= '*.cfc' />	
+			<replacetoken><![CDATA[public void function beforeTests() {]]></replacetoken>
+			 <replacevalue><![CDATA[public void function beforeTests(/**/) {
+	 	if(IsDefined("picCounter")== false) {
+    		picCounter= 1;
+   		 }
+		selenium = createObject("component", "cfselenium.selenium").init();
+		browserCommand= "";]]></replacevalue>
+		</replace>
+		
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes= '*.cfc' token='browserCommand= "";' value='browserCommand= "${firefoxBrowser}";' />
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes= '*.cfc' token='selenium = createObject("component", "cfselenium.selenium").init();' value='selenium = createObject("component", "cfselenium.selenium").init("${firefoxIP}");' />
+
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+			<include name= '*.cfc' />	
+			<replacetoken><![CDATA[super.beforeTests();]]></replacetoken>
+			<replacevalue><![CDATA[]]></replacevalue>
+		</replace>
+		
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+			<include name= '*.cfc' />	
+			<replacetoken><![CDATA[selenium.setTimeout(30000);]]></replacetoken>
+			<replacevalue><![CDATA[selenium.start(browserUrl,browserCommand);
+		selenium.setTimeout(30000)/**/;
+		selenium.setSpeed("1000");	
+			 ]]></replacevalue>
+		</replace>
+	
+		<echo>Converting any captureEntirePageScreenshot commands....</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("", "");' value='selenium.captureScreenshot(" ");' />
+		
+		<echo>Converting any captureScreenshot commands....</echo>
+		<replaceregexp 
+				match="selenium.captureScreenshot(.+);" 
+				replace= 'selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")/**/;&#10;        picCounter=picCounter+1;'
+				byline="true">
+			
+			<fileset dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+				<filename name="**/*.cfc"/>
+			</fileset>
+		</replaceregexp>
+
+		<!-- Comment out Selenium IDE commands not supported by Selenium Server/CFSelenium: -->
+		<replace dir='${baseSeleniumTestDirectory}/${firefoxFolder}' includes='*.cfc' token='verifyEquals("' value='//Not Supported: verifyEquals("' />
+			
+		<echo>Firefox tests converted.</echo>
+		
+		<!-- CONVERT --> 
+		<antcall target="copyConvertToChrome" /> 
+		<antcall target="copyConvertToSafari" /> 
+		<antcall target="copyConvertToOpera" /> 
+		<antcall target="copyConvertToIE" /> 
+				
+		<echo>All tests modified and copied.</echo>
+	</target>
+	
+	<!--  Firefox to Chrome test copy/convertion task +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
+	<target name="copyConvertToChrome" if="chromeFolder">
+		
+		<echo>Copying Firefox tests to Chrome folder....</echo>
+		<copy todir='${baseSeleniumTestDirectory}/${chromeFolder}'>
+			<fileset dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+				<filename name="**/*.cfc"/>
+			</fileset>
+		</copy>
+		
+		<echo>Converting to Chrome tests...</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${chromeFolder}' includes= '*.cfc' token='browserCommand= "${firefoxBrowser}";' value='browserCommand= "${chromeBrowser}";' />
+		<replace dir='${baseSeleniumTestDirectory}/${chromeFolder}' includes= '*.cfc' token='selenium = createObject("component", "cfselenium.selenium").init("${firefoxIP}");' value='selenium = createObject("component", "cfselenium.selenium").init("${chromeIP}");' />
+
+		<echo>Converting any screenshot commands to captureScreenshot (the only one supported in the browser)...</echo>
+		<antcall target="chromeRemoteScreenshot" /> 
+		<antcall target="chromeLocalScreenshot" /> 
+	</target>
+	
+	<!-- If a mapped drive path is defined, that will be the location for screenshots.  Otherwise, will write to specified local folder -->
+	<target name="chromeRemoteScreenshot" if="chromeMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${chromeFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${chromeMappedDrivePath}/${chromeFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+	<target name="chromeLocalScreenshot" unless="chromeMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${chromeFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${baseSeleniumTestDirectory}/${chromeFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+	
+	<!--  Firefox to Safari test copy/conversion tasks +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
+	<target name="copyConvertToSafari" if="safariFolder">
+		
+		<echo>Copying Firefox tests to Safari folder....</echo>
+		<copy todir='${baseSeleniumTestDirectory}/${safariFolder}'>
+			<fileset dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+				<filename name="**/*.cfc"/>
+			</fileset>
+		</copy>
+		
+		<echo>Converting to Safari tests...</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${safariFolder}' includes= '*.cfc' token='browserCommand= "${firefoxBrowser}";' value='browserCommand= "${safariBrowser}";' />
+		<replace dir='${baseSeleniumTestDirectory}/${safariFolder}' includes= '*.cfc' token='selenium = createObject("component", "cfselenium.selenium").init("${firefoxIP}");' value='selenium = createObject("component", "cfselenium.selenium").init("${safariIP}");' />
+		
+		<echo>Converting any screenshot commands to captureScreenshot (the only one supported in the browser)...</echo>
+		<antcall target="safariRemoteScreenshot" /> 
+		<antcall target="safariLocalScreenshot" /> 
+	</target>
+	
+	<!-- If a mapped drive path is defined, that will be the location for screenshots.  Otherwise, will write to specified local folder -->
+	<target name="safariRemoteScreenshot" if="safariMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${safariFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${safariMappedDrivePath}/${safariFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+	<target name="safariLocalScreenshot" unless="safariMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${safariFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${baseSeleniumTestDirectory}/${safariFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+	
+	<!--  Firefox to Opera test copy/convertion tasks +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
+	<target name="copyConvertToOpera" if="operaFolder">
+		
+		<echo>Copying Firefox tests to Opera folder....</echo>
+		<copy todir='${baseSeleniumTestDirectory}/${operaFolder}'>
+			<fileset dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+				<filename name="**/*.cfc"/>
+			</fileset>
+		</copy>
+		
+		<echo>Converting to Opera tests...</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${operaFolder}' includes= '*.cfc' token='browserCommand= "${firefoxBrowser}";' value='browserCommand= "${operaBrowser}";' />
+		<replace dir='${baseSeleniumTestDirectory}/${operaFolder}' includes= '*.cfc' token='selenium = createObject("component", "cfselenium.selenium").init("${firefoxIP}");' value='selenium = createObject("component", "cfselenium.selenium").init("${operaIP}");' />
+		
+		<echo>Converting any screenshot commands to captureScreenshot (the only one supported in the browser)...</echo>
+		<antcall target="operaRemoteScreenshot" /> 
+		<antcall target="operaLocalScreenshot" /> 
+		
+	</target>
+	
+	<!-- If a mapped drive path is defined, that will be the location for screenshots.  Otherwise, will write to specified local folder -->
+	<target name="operaRemoteScreenshot" if="operaMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${operaFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${operaMappedDrivePath}/${operaFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+	<target name="operaLocalScreenshot" unless="operaMappedDrivePath">
+		<replace dir='${baseSeleniumTestDirectory}/${operaFolder}' includes= '*.cfc' token='selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${firefoxFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","")' value='selenium.captureScreenshot("${baseSeleniumTestDirectory}/${operaFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png")' />
+	</target>
+
+	<!--  Firefox to IE test copy/conversion tasks +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
+	<target name="copyConvertToIE" if="ieFolder">
+		
+		<echo>Copying Firefox tests to IE folder....</echo>
+		<copy todir='${baseSeleniumTestDirectory}/${ieFolder}'>
+			<fileset dir='${baseSeleniumTestDirectory}/${firefoxFolder}'>
+				<filename name="**/*.cfc"/>
+			</fileset>
+		</copy>
+		
+		<echo>Converting to IE tests...</echo>
+		<replace dir='${baseSeleniumTestDirectory}/${ieFolder}' includes= '*.cfc' token='browserCommand= "${firefoxBrowser}";' value='browserCommand= "${ieBrowser}";' />
+		<replace dir='${baseSeleniumTestDirectory}/${ieFolder}' includes= '*.cfc' token='selenium = createObject("component", "cfselenium.selenium").init("${firefoxIP}");' value='selenium = createObject("component", "cfselenium.selenium").init("${ieIP}");' />
+		
+		<echo>Converting any captureEntirePageScreenshot commands....</echo>
+		<antcall target="ieHasSnapsie" />
+		<antcall target="ieNoSnapsie" />
+		
+	</target>
+
+	<target name="ieHasSnapsie" if="snapsieInstalled">
+		<echo>snapsie for IE installed, acting accordingly...</echo>
+		<antcall target="ieRemoteEntireScreenshot" /> 
+		<antcall target="ieLocalEntireScreenshot" /> 
+	</target>
+	
+	<target name="ieNoSnapsie" unless="snapsieInstalled">
+		<antcall target="ieRemoteScreenshot" /> 
+		<antcall target="ieLocalScreenshot" /> 
+	</target>
+	
+	<!-- If a mapped drive path is defined, that will be the location for screenshots.  Otherwise, will write to specified local folder -->
+	<target name="ieRemoteEntireScreenshot" if="ieMappedDrivePath">
+		<replaceregexp 
+				match="selenium.captureEntirePageScreenshot(.+)" 
+				replace= 'selenium.captureEntirePageScreenshot("${ieMappedDrivePath}/${ieFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","");'
+				byline="true">
+				<fileset dir='${baseSeleniumTestDirectory}/${ieFolder}'>
+					<filename name="**/*.cfc"/>
+				</fileset>
+		</replaceregexp>
+	</target>
+	<target name="ieLocalEntireScreenshot" unless="ieMappedDrivePath">
+		<replaceregexp 
+				match="selenium.captureEntirePageScreenshot(.+)" 
+				replace= 'selenium.captureEntirePageScreenshot("${baseSeleniumTestDirectory}/${ieFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","");'
+				byline="true">
+				<fileset dir='${baseSeleniumTestDirectory}/${ieFolder}'>
+					<filename name="**/*.cfc"/>
+				</fileset>
+		</replaceregexp>
+	</target>
+	
+	<target name="ieRemoteScreenshot" if="ieMappedDrivePath">
+		<replaceregexp 
+				match="selenium.captureEntirePageScreenshot(.+)" 
+				replace= 'selenium.captureScreenshot("${ieMappedDrivePath}/${ieFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","");'
+				byline="true">
+				<fileset dir='${baseSeleniumTestDirectory}/${ieFolder}'>
+					<filename name="**/*.cfc"/>
+				</fileset>
+		</replaceregexp>
+	</target>
+	<target name="ieLocalScreenshot" unless="ieMappedDrivePath">
+		<replaceregexp 
+				match="selenium.captureEntirePageScreenshot(.+)" 
+				replace= 'selenium.captureScreenshot("${baseSeleniumTestDirectory}/${ieFolder}/${screenshotFolder}/#getFunctionCalledName()##picCounter#.png","");'
+				byline="true">
+				<fileset dir='${baseSeleniumTestDirectory}/${ieFolder}'>
+					<filename name="**/*.cfc"/>
+				</fileset>
+		</replaceregexp>
+	</target>
+
+</project> 
